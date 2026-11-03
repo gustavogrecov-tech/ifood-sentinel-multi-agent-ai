@@ -1,18 +1,19 @@
 """
 Synthetic Multimodal Evidence Generator using Pillow (PIL).
-Generates 3 rich, realistic visual test cards in `data/sample_media/`:
-1. `dispute_high_risk`: Receipt + intact premium order card for a high-risk refund claim
-2. `dispute_legit_damaged`: Severe packaging damage & 78-min delay evidence card
-3. `menu_physical_messy`: Physical restaurant menu with 6 dishes, weak copywriting, and R$ 450.00 price typo
+Generates 5 realistic visual test cards in BOTH:
+- `fotos_para_testar/` (with friendly Portuguese filenames so the user can drag-and-drop in Streamlit)
+- `data/sample_media/` (for internal preset references)
 """
 
 from __future__ import annotations
+import shutil
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SAMPLE_MEDIA_DIR = BASE_DIR / "data" / "sample_media"
+USER_TEST_PHOTOS_DIR = BASE_DIR / "fotos_para_testar"
 
 
 def _get_font(size: int = 16) -> ImageFont.ImageFont:
@@ -152,8 +153,69 @@ def _draw_menu_physical_messy(path: Path) -> None:
     img.save(str(path), format="PNG")
 
 
+def _draw_sushi_fraud_dark_photo(path: Path) -> None:
+    img = Image.new("RGB", (820, 520), color=(30, 18, 24))
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([0, 0, 820, 68], fill=(185, 28, 28))
+    draw.text((24, 18), "iFood Trust & Safety — Evidência Suspeita #IFD-99201 (Sushi Prime)", fill=(255, 255, 255), font=_get_font(21))
+
+    draw.rectangle([24, 90, 380, 490], fill=(250, 245, 240), outline=(220, 180, 180), width=2)
+    lines = [
+        "COMPROVANTE PEDIDO #IFD-99201",
+        "Restaurante: Sushi Leblon Express",
+        "----------------------------------------",
+        "1x Combinado Imperial 48 Peças R$ 219,00",
+        "2x Temaki Salmão Trufado       R$  49,90",
+        "----------------------------------------",
+        "TOTAL PAGO (PIX):              R$ 268,90",
+        "Entrega confirmada por PIN: SIM",
+        "----------------------------------------",
+        "Reclamação: 'Não recebi metade das peças'",
+        "Alerta Conta: 9 estornos nos últimos 30d",
+    ]
+    y = 110
+    for line in lines:
+        draw.text((40, y), line, fill=(170, 20, 20) if "Alerta" in line else (30, 30, 30), font=_get_font(14))
+        y += 28
+
+    draw.rectangle([405, 90, 796, 490], fill=(45, 32, 38), outline=(234, 29, 44), width=2)
+    draw.text((425, 110), "FOTO ENVIADA PELO USUÁRIO:", fill=(255, 180, 180), font=_get_font(17))
+    draw.rectangle([455, 155, 745, 355], fill=(60, 65, 75), outline=(200, 200, 200), width=2)
+    draw.text((490, 225), "BANDEJA LACRADA COM 48 PEÇAS", fill=(255, 255, 255), font=_get_font(15))
+    draw.text((510, 255), "(Contagem Visual Vision AI: OK)", fill=(160, 240, 180), font=_get_font(14))
+    draw.text((435, 395), "Veredito Vision AI: Tentativa de Golpe (Foto Intacta)", fill=(255, 110, 110), font=_get_font(15))
+
+    img.save(str(path), format="PNG")
+
+
+def _draw_pizza_menu_weak_seo(path: Path) -> None:
+    img = Image.new("RGB", (820, 540), color=(248, 244, 232))
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([0, 0, 820, 72], fill=(153, 27, 27))
+    draw.text((24, 20), "CARDÁPIO ENVIADO — Pizzaria Forno D'Oro (Auditoria MenuOps)", fill=(255, 255, 255), font=_get_font(21))
+
+    dishes = [
+        ("1. Pizza Calabresa", "pizza com calabresa e cebola", "R$ 59,90", False),
+        ("2. Pizza Marguerita", "queijo tomate manjericao", "R$ 64,90", False),
+        ("3. Pizza 4 Queijos Especial", "pizza de queijo", "R$ 690,00  [ERRO DE DIGITAÇÃO R$ 690!]", True),
+        ("4. Brotinho Chocolate", "pizza doce", "R$ 34,90", False),
+    ]
+    y = 115
+    for title, desc, price_str, is_anom in dishes:
+        fill_c = (254, 226, 226) if is_anom else (255, 255, 255)
+        draw.rectangle([42, y, 778, y + 75], fill=fill_c, outline=(220, 38, 38) if is_anom else (200, 190, 180), width=2)
+        draw.text((58, y + 12), f"{title}  —  {price_str}", fill=(185, 28, 28) if is_anom else (25, 25, 25), font=_get_font(16))
+        draw.text((58, y + 42), f"Texto atual: '{desc}' -> Precisa de Otimização IA", fill=(100, 90, 85), font=_get_font(14))
+        y += 92
+
+    img.save(str(path), format="PNG")
+
+
 def ensure_sample_images() -> dict[str, str]:
     SAMPLE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    USER_TEST_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
 
     paths = {
         "dispute_high_risk": SAMPLE_MEDIA_DIR / "dispute_high_risk.png",
@@ -168,4 +230,27 @@ def ensure_sample_images() -> dict[str, str]:
     if not paths["menu_physical_messy"].exists():
         _draw_menu_physical_messy(paths["menu_physical_messy"])
 
+    friendly_map = {
+        "1_golpe_embalagem_intacta_churrasco.png": paths["dispute_high_risk"],
+        "2_cliente_honesto_embalagem_rasgada_molho_vazado.png": paths["dispute_legit_damaged"],
+        "3_cardapio_hamburgueria_preco_errado_450_reais.png": paths["menu_physical_messy"],
+    }
+    for fname, src_path in friendly_map.items():
+        dst = USER_TEST_PHOTOS_DIR / fname
+        if not dst.exists():
+            shutil.copyfile(src_path, dst)
+
+    extra_4 = USER_TEST_PHOTOS_DIR / "4_golpe_sushi_268_reais_lacre_intacto.png"
+    if not extra_4.exists():
+        _draw_sushi_fraud_dark_photo(extra_4)
+
+    extra_5 = USER_TEST_PHOTOS_DIR / "5_cardapio_pizzaria_erro_690_reais.png"
+    if not extra_5.exists():
+        _draw_pizza_menu_weak_seo(extra_5)
+
     return {k: str(v) for k, v in paths.items()}
+
+
+def get_user_test_photos() -> dict[str, str]:
+    ensure_sample_images()
+    return {p.name: str(p) for p in sorted(USER_TEST_PHOTOS_DIR.glob("*.png"))}
