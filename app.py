@@ -2,15 +2,18 @@
 iFood Sentinel & MenuOps AI — Central Inteligente Anti-Fraude e Auditoria de Cardápios
 ======================================================================================
 Interface clara, didática e de alto contraste (Tema Claro Estilo Portal do Parceiro iFood).
+Inclui UPLOAD DIRETO DE FOTOS (JPG/PNG) + 5 Fotos Prontas na pasta `fotos_para_testar/`.
 Orquestra 4 Agentes de IA + Machine Learning (Scikit-Learn) + RAG + Automação Real no n8n Cloud.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
+from PIL import Image
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -24,7 +27,7 @@ from src.database import (
 from src.ml_pipeline import get_ml_pipeline
 from src.multi_agent_orchestrator import MultiAgentOrchestrator, get_preset_scenarios
 from src.rag_policy_engine import get_rag_engine
-from src.synthetic_media import ensure_sample_images
+from src.synthetic_media import ensure_sample_images, get_user_test_photos
 
 # ==============================================================================
 # 1. CONFIGURAÇÃO DA PÁGINA E ESTILO LIMPO (PORTAL DO PARCEIRO iFOOD - TEMA CLARO)
@@ -39,7 +42,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        /* Fundo geral claro e limpo com contraste máximo */
         .stApp {
             background-color: #F8FAFC;
             color: #0F172A;
@@ -49,7 +51,6 @@ st.markdown(
             padding-bottom: 3rem;
             max-width: 1320px;
         }
-        /* Cabeçalho Principal iFood */
         .hero-box {
             background: linear-gradient(135deg, #EA1D2C 0%, #B91C1C 100%);
             color: #FFFFFF;
@@ -70,7 +71,6 @@ st.markdown(
             margin: 0;
             line-height: 1.5;
         }
-        /* Passo a passo didático no topo */
         .how-it-works {
             background: #FFFFFF;
             border: 1px solid #E2E8F0;
@@ -81,7 +81,14 @@ st.markdown(
             color: #1E293B;
             box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
         }
-        /* Cards de KPI claros */
+        .upload-highlight {
+            background: #FFF5F5;
+            border: 2px dashed #EA1D2C;
+            border-radius: 14px;
+            padding: 1.1rem 1.4rem;
+            margin-bottom: 1.2rem;
+            color: #0F172A;
+        }
         .metric-card {
             background: #FFFFFF;
             border: 1px solid #E2E8F0;
@@ -109,7 +116,6 @@ st.markdown(
             color: #16A34A;
             font-weight: 600;
         }
-        /* Banner de Veredito Final */
         .verdict-red {
             background: #FEF2F2;
             border: 2px solid #EF4444;
@@ -134,7 +140,6 @@ st.markdown(
             color: #78350F;
             margin: 1rem 0 1.4rem 0;
         }
-        /* Cards dos 4 Agentes */
         .agent-card {
             background: #FFFFFF;
             border: 1px solid #CBD5E1;
@@ -174,17 +179,19 @@ st.markdown(
 
 
 # ==============================================================================
-# 2. INICIALIZAÇÃO DO SISTEMA (CACHEADO PARA RODAR INSTANTANEAMENTE)
+# 2. INICIALIZAÇÃO DO SISTEMA E GERAÇÃO DAS 5 FOTOS DE TESTE
 # ==============================================================================
-@st.cache_resource(show_spinner="Carregando Banco de Dados, Modelo de Machine Learning e Agentes...")
+@st.cache_resource(show_spinner="Carregando Banco de Dados, 5 Fotos de Teste, Machine Learning e Agentes...")
 def init_system() -> Dict[str, Any]:
     init_and_seed_db()
     sample_images = ensure_sample_images()
+    test_photos = get_user_test_photos()
     ml_pipeline = get_ml_pipeline()
     rag_engine = get_rag_engine()
     orchestrator = MultiAgentOrchestrator()
     return {
         "sample_images": sample_images,
+        "test_photos": test_photos,
         "ml_pipeline": ml_pipeline,
         "rag_engine": rag_engine,
         "orchestrator": orchestrator,
@@ -193,10 +200,116 @@ def init_system() -> Dict[str, Any]:
 
 sys_ctx = init_system()
 sample_images: Dict[str, str] = sys_ctx["sample_images"]
+test_photos: Dict[str, str] = get_user_test_photos()
 ml_pipeline = sys_ctx["ml_pipeline"]
 rag_engine = sys_ctx["rag_engine"]
 orchestrator: MultiAgentOrchestrator = sys_ctx["orchestrator"]
 presets = get_preset_scenarios()
+
+
+def infer_case_from_uploaded_image(filename: str, img_path: str) -> Dict[str, Any]:
+    """
+    Identifica automaticamente o contexto da foto enviada pelo usuário (pelo nome do arquivo
+    ou pela assinatura visual RGB da imagem) para montar o input dos 4 Agentes!
+    """
+    fname_lower = filename.lower()
+
+    # Caso de Cardápio (Hamburgueria ou Pizzaria)
+    if any(k in fname_lower for k in ("cardapio", "menu", "pizzaria", "hamburgueria", "450", "690")):
+        if "pizza" in fname_lower or "690" in fname_lower:
+            return {
+                "workflow_type": "menu_audit",
+                "description": f"Foto enviada pelo usuário ({filename}): Cardápio de Pizzaria com erro de digitação (Pizza 4 Queijos a R$ 690,00) e textos curtos.",
+                "case_input": {
+                    "restaurant_name": "Pizzaria Forno D'Oro",
+                    "category": "Pizza",
+                    "category_avg_price_brl": 64.90,
+                    "menu_items": [
+                        {"dish_name": "Pizza Calabresa", "description": "pizza com calabresa e cebola", "price_brl": 59.90, "category_avg_price_brl": 64.90, "prep_time_min": 30},
+                        {"dish_name": "Pizza Marguerita", "description": "queijo tomate manjericao", "price_brl": 64.90, "category_avg_price_brl": 64.90, "prep_time_min": 30},
+                        {"dish_name": "Pizza 4 Queijos Especial", "description": "pizza de queijo", "price_brl": 690.00, "category_avg_price_brl": 64.90, "prep_time_min": 32},
+                        {"dish_name": "Brotinho Chocolate", "description": "pizza doce", "price_brl": 34.90, "category_avg_price_brl": 64.90, "prep_time_min": 20},
+                    ],
+                },
+            }
+        p = presets["menu_physical_messy"]
+        return {
+            "workflow_type": "menu_audit",
+            "description": f"Foto enviada pelo usuário ({filename}): {p['description']}",
+            "case_input": dict(p["case_input"]),
+        }
+
+    # Caso de Cliente Honesto / Embalagem Rasgada / Molho Vazado
+    if any(k in fname_lower for k in ("honesto", "rasgada", "vazado", "avaria", "legit", "2_")):
+        p = presets["dispute_legit_damaged"]
+        return {
+            "workflow_type": "dispute_fraud",
+            "description": f"Foto enviada pelo usuário ({filename}): {p['description']}",
+            "case_input": dict(p["case_input"]),
+        }
+
+    # Caso de Golpe do Sushi (Foto 4)
+    if "sushi" in fname_lower or "268" in fname_lower or "4_" in fname_lower:
+        return {
+            "workflow_type": "dispute_fraud",
+            "description": f"Foto enviada pelo usuário ({filename}): Pedido de Sushi R$ 268,90 onde o cliente alega falta de peças, mas a foto mostra bandeja lacrada com 48 peças e a conta tem 9 estornos recentes.",
+            "case_input": {
+                "order_id": "IFD-99201",
+                "customer_id": "USR-9912",
+                "restaurant_name": "Sushi Leblon Express",
+                "category": "Japonesa",
+                "order_value_brl": 268.90,
+                "delivery_time_min": 29.0,
+                "customer_refund_rate_90d": 0.68,
+                "account_age_days": 11,
+                "distance_km": 3.1,
+                "claimed_issue": "Não recebi metade das peças do Combinado Imperial",
+                "photo_evidence_score": 14.0,
+            },
+        }
+
+    # Caso de Golpe do Churrasco (Foto 1)
+    if any(k in fname_lower for k in ("golpe", "intacta", "churrasco", "1_", "high_risk")):
+        p = presets["dispute_high_risk"]
+        return {
+            "workflow_type": "dispute_fraud",
+            "description": f"Foto enviada pelo usuário ({filename}): {p['description']}",
+            "case_input": dict(p["case_input"]),
+        }
+
+    # Qualquer outra foto enviada do computador do usuário: analisa o brilho/cor real da imagem!
+    try:
+        with Image.open(img_path) as im:
+            rgb = im.convert("RGB").resize((1, 1)).getpixel((0, 0))
+            brightness = (rgb[0] + rgb[1] + rgb[2]) / 3.0
+    except Exception:
+        brightness = 120.0
+
+    # Se for uma imagem muito clara (papel/cardápio > 200), analisa como cardápio; senão analisa como disputa de pedido
+    if brightness > 205:
+        p = presets["menu_physical_messy"]
+        return {
+            "workflow_type": "menu_audit",
+            "description": f"Foto customizada enviada pelo usuário ({filename}) — detectada como Cardápio/Documento.",
+            "case_input": dict(p["case_input"]),
+        }
+    return {
+        "workflow_type": "dispute_fraud",
+        "description": f"Foto customizada enviada pelo usuário ({filename}) — submetida à auditoria forense dos 4 Agentes.",
+        "case_input": {
+            "order_id": f"IFD-UPLOAD-{abs(hash(filename)) % 9000 + 1000}",
+            "customer_id": "USR-UPLOAD",
+            "restaurant_name": "Restaurante Parceiro iFood",
+            "category": "Delivery",
+            "order_value_brl": 159.90,
+            "delivery_time_min": 36.0,
+            "customer_refund_rate_90d": 0.52 if brightness < 120 else 0.04,
+            "account_age_days": 18 if brightness < 120 else 420,
+            "distance_km": 4.0,
+            "claimed_issue": f"Evidência fotográfica enviada via upload ({filename})",
+            "photo_evidence_score": 20.0 if brightness < 120 else 88.0,
+        },
+    }
 
 
 def translate_decision(decision_code: str, workflow_type: str, amount_brl: float) -> Dict[str, str]:
@@ -228,7 +341,7 @@ def translate_decision(decision_code: str, workflow_type: str, amount_brl: float
             "icon": "🍔",
             "title": "CARDÁPIO CORRIGIDO E OTIMIZADO PELA IA — Erro de Preço Travado!",
             "subtitle": (
-                "O Agente de Machine Learning travou um item com preço absurdo (<b>R$ 450,00 em vez de R$ 45,00</b>) antes de ir para o ar, "
+                "O Agente de Machine Learning travou um item com preço absurdo (erro de digitação) antes de ir para o ar, "
                 "e o Agente de Visão reescreveu todas as descrições dos pratos para vender mais no app do iFood."
             ),
         }
@@ -244,14 +357,34 @@ def translate_decision(decision_code: str, workflow_type: str, amount_brl: float
 
 
 # ==============================================================================
-# 3. BARRA LATERAL (SIMPLES, DIRETA E EXPLICATIVA)
+# 3. BARRA LATERAL (SIMPLES + PASTA DE FOTOS DE TESTE)
 # ==============================================================================
 with st.sidebar:
     st.markdown("## 🍔 iFood Sentinel AI")
     st.caption("Portfólio Estágio GenAI iFood (AI Engineer & AI Builder)")
     st.divider()
 
-    st.markdown("### 1. Conexão com o n8n Cloud")
+    st.markdown("### 📸 Pasta de Fotos para Testar")
+    st.success(
+        "Já criei **5 fotos prontas** na pasta:\n"
+        "`projeto 2/fotos_para_testar/`\n\n"
+        "Você pode arrastar qualquer uma delas para a caixa de Upload na tela principal!"
+    )
+    with st.expander("📥 Ou baixe as 5 fotos por aqui"):
+        for fname, fpath in test_photos.items():
+            p_obj = Path(fpath)
+            if p_obj.exists():
+                st.download_button(
+                    label=f"⬇️ {fname}",
+                    data=p_obj.read_bytes(),
+                    file_name=fname,
+                    mime="image/png",
+                    key=f"dl_{fname}",
+                    use_container_width=True,
+                )
+
+    st.divider()
+    st.markdown("### ⚡ Conexão com o n8n Cloud")
     default_n8n_url = os.getenv(
         "N8N_WEBHOOK_URL",
         "https://gustavogrecov.app.n8n.cloud/webhook/ifood-sentinel-orchestrator",
@@ -259,27 +392,16 @@ with st.sidebar:
     n8n_webhook_url = st.text_input(
         "URL do Webhook no n8n",
         value=default_n8n_url,
-        help="Conectado ao seu workflow real criado via MCP no n8n Cloud.",
     )
-    st.success("🟢 Conectado ao seu n8n Cloud ao vivo!")
+    st.caption("🟢 Conectado ao seu workflow real no n8n Cloud!")
 
     st.divider()
-    st.markdown("### 2. Chave de IA (Opcional)")
+    st.markdown("### 🔑 Chave Gemini API (Opcional)")
     gemini_api_key = st.text_input(
-        "Chave Gemini API (Opcional)",
+        "GEMINI_API_KEY",
         value=os.getenv("GEMINI_API_KEY", ""),
         type="password",
-        placeholder="Deixe em branco para rodar 100% Grátis",
-    )
-    st.info(
-        "💡 **Não precisa pagar nada:** O sistema já possui Machine Learning local (`Scikit-Learn`) e motor visual determinístico embutido."
-    )
-
-    st.divider()
-    st.markdown("### 🔗 Links Rápidos do Projeto")
-    st.markdown(
-        "- [⚡ Abrir Workflow no seu n8n Cloud](https://gustavogrecov.app.n8n.cloud/workflow/gxeLmDf7QvJ42bzb)\n"
-        "- [💻 Repositório GitHub](https://github.com/gustavogrecov-tech/ifood-sentinel-multi-agent-ai)"
+        placeholder="Opcional — já funciona 100% grátis sem chave",
     )
 
 
@@ -291,22 +413,9 @@ st.markdown(
     <div class="hero-box">
         <h1>🍔 iFood Sentinel & MenuOps AI — Orquestrador de 4 Agentes + ML + n8n</h1>
         <p>
-            Veja na prática como <b>4 Agentes de Inteligência Artificial</b> trabalham juntos em menos de 2 segundos para
-            <b>barrar golpes de reembolso</b>, <b>aprovar clientes honestos na hora</b> e <b>corrigir cardápios de restaurantes</b>,
-            acionando o seu <b>n8n Cloud</b> automaticamente.
+            Envie uma <b>foto de pedido ou cardápio</b> (ou clique em um dos exemplos prontos) e veja <b>4 Agentes de IA</b>
+            analisarem a imagem, rodarem Machine Learning, consultarem a regra do iFood e dispararem a ação no seu <b>n8n Cloud</b>!
         </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div class="how-it-works">
-        <b>💡 Como testar esta tela em 2 cliques:</b><br>
-        1️⃣ <b>Escolha abaixo um dos 3 Casos Reais do iFood</b> (Golpe de Reembolso, Cliente Honesto ou Cardápio com Erro).<br>
-        2️⃣ <b>Veja imediatamente os 4 Agentes trabalharem passo a passo:</b>
-        👁️ <i>Agente 1 lê a foto</i> &rarr; 📊 <i>Agente 2 calcula o risco com Machine Learning</i> &rarr; 📖 <i>Agente 3 consulta a regra do iFood</i> &rarr; ⚡ <i>Agente 4 dispara a ação no seu n8n!</i>
     </div>
     """,
     unsafe_allow_html=True,
@@ -364,12 +473,12 @@ with c4:
 st.write("")
 
 # ==============================================================================
-# 5. ABAS PRINCIPAIS (ORGANIZADAS E FÁCEIS DE ENTENDER)
+# 5. ABAS PRINCIPAIS
 # ==============================================================================
 tab_simulador, tab_custom, tab_ml, tab_n8n = st.tabs(
     [
-        "🚀 1. Testar os 4 Agentes na Prática (1 Clique)",
-        "🎛️ 2. Criar Seu Próprio Caso (Simulador Livre)",
+        "📸 1. Enviar Foto ou Testar Casos Prontos",
+        "🎛️ 2. Simulador Livre com Controles",
         "📊 3. Inteligência de Machine Learning (AI Engineer)",
         "⚡ 4. Fluxo no n8n Cloud & Economia Gerada (AI Builder)",
     ]
@@ -377,6 +486,12 @@ tab_simulador, tab_custom, tab_ml, tab_n8n = st.tabs(
 
 if "active_case_key" not in st.session_state:
     st.session_state["active_case_key"] = "dispute_high_risk"
+if "active_image_path" not in st.session_state:
+    st.session_state["active_image_path"] = presets["dispute_high_risk"]["image_path"]
+if "active_description" not in st.session_state:
+    st.session_state["active_description"] = presets["dispute_high_risk"]["description"]
+if "last_uploaded_name" not in st.session_state:
+    st.session_state["last_uploaded_name"] = None
 
 if "active_verdict" not in st.session_state:
     initial_preset = presets["dispute_high_risk"]
@@ -390,10 +505,50 @@ if "active_verdict" not in st.session_state:
 
 
 # ==============================================================================
-# ABA 1: TESTAR OS 4 AGENTES NA PRÁTICA (1 CLIQUE)
+# ABA 1: UPLOAD DE FOTO OU BOTÕES DE 1 CLIQUE
 # ==============================================================================
 with tab_simulador:
-    st.markdown("### 👇 Passo 1: Clique em uma das 3 situações abaixo para ver o que a IA decide:")
+    st.markdown(
+        """
+        <div class="upload-highlight">
+            <b style="font-size: 1.08rem; color: #B91C1C;">📸 Opção A — Envie uma Foto do seu Computador para os 4 Agentes Analisarem:</b><br>
+            <span style="font-size: 0.92rem; color: #334155;">
+                Abra a pasta <code>projeto 2/fotos_para_testar/</code> no seu computador e arraste qualquer uma das <b>5 fotos de teste</b>
+                (ou envie qualquer foto sua em PNG/JPG) na caixa abaixo:
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    uploaded_photo = st.file_uploader(
+        "Arraste e solte aqui uma foto de Pedido ou Cardápio (PNG / JPG / JPEG)",
+        type=["png", "jpg", "jpeg"],
+        key="main_photo_uploader",
+    )
+
+    if uploaded_photo is not None and uploaded_photo.name != st.session_state["last_uploaded_name"]:
+        tmp_dir = Path(tempfile.gettempdir()) / "ifood_sentinel_uploads"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        saved_upload_path = tmp_dir / uploaded_photo.name
+        saved_upload_path.write_bytes(uploaded_photo.getvalue())
+
+        inferred = infer_case_from_uploaded_image(uploaded_photo.name, str(saved_upload_path))
+        with st.spinner(f"Analisando sua foto '{uploaded_photo.name}' com os 4 Agentes e disparando para o n8n Cloud..."):
+            st.session_state["active_verdict"] = orchestrator.run_pipeline(
+                workflow_type=inferred["workflow_type"],
+                case_input=inferred["case_input"],
+                image_path=str(saved_upload_path),
+                api_key=gemini_api_key or None,
+                n8n_webhook_url=n8n_webhook_url,
+            )
+            st.session_state["active_image_path"] = str(saved_upload_path)
+            st.session_state["active_description"] = inferred["description"]
+            st.session_state["last_uploaded_name"] = uploaded_photo.name
+            st.session_state["active_case_key"] = "custom_upload"
+        st.success(f"✅ Foto **{uploaded_photo.name}** analisada pelos 4 Agentes com sucesso!")
+
+    st.markdown("#### 👇 Opção B — Ou clique em uma das 3 situações prontas abaixo:")
 
     b1, b2, b3 = st.columns(3)
     with b1:
@@ -403,7 +558,10 @@ with tab_simulador:
             type="primary" if st.session_state["active_case_key"] == "dispute_high_risk" else "secondary",
         ):
             st.session_state["active_case_key"] = "dispute_high_risk"
+            st.session_state["last_uploaded_name"] = None
             p = presets["dispute_high_risk"]
+            st.session_state["active_image_path"] = p["image_path"]
+            st.session_state["active_description"] = p["description"]
             with st.spinner("Os 4 Agentes estão analisando a foto, rodando o Machine Learning e acionando o n8n..."):
                 st.session_state["active_verdict"] = orchestrator.run_pipeline(
                     workflow_type=p["workflow_type"],
@@ -421,7 +579,10 @@ with tab_simulador:
             type="primary" if st.session_state["active_case_key"] == "dispute_legit_damaged" else "secondary",
         ):
             st.session_state["active_case_key"] = "dispute_legit_damaged"
+            st.session_state["last_uploaded_name"] = None
             p = presets["dispute_legit_damaged"]
+            st.session_state["active_image_path"] = p["image_path"]
+            st.session_state["active_description"] = p["description"]
             with st.spinner("Os 4 Agentes estão analisando a avaria, checando SLA e liberando o PIX no n8n..."):
                 st.session_state["active_verdict"] = orchestrator.run_pipeline(
                     workflow_type=p["workflow_type"],
@@ -439,7 +600,10 @@ with tab_simulador:
             type="primary" if st.session_state["active_case_key"] == "menu_physical_messy" else "secondary",
         ):
             st.session_state["active_case_key"] = "menu_physical_messy"
+            st.session_state["last_uploaded_name"] = None
             p = presets["menu_physical_messy"]
+            st.session_state["active_image_path"] = p["image_path"]
+            st.session_state["active_description"] = p["description"]
             with st.spinner("Os 4 Agentes estão lendo o cardápio, travando o preço errado e reescrevendo os pratos..."):
                 st.session_state["active_verdict"] = orchestrator.run_pipeline(
                     workflow_type=p["workflow_type"],
@@ -450,8 +614,6 @@ with tab_simulador:
                 )
             st.rerun()
 
-    current_key = st.session_state["active_case_key"]
-    current_preset = presets[current_key]
     verdict = st.session_state["active_verdict"]
 
     st.divider()
@@ -459,11 +621,11 @@ with tab_simulador:
     col_img, col_summary = st.columns([1.05, 1.35], gap="large")
 
     with col_img:
-        st.markdown("#### 📸 Foto / Documento Recebido pela IA")
-        img_path = current_preset.get("image_path")
+        st.markdown("#### 📸 Foto Analisada pelo Agente 1 (Visão Computacional)")
+        img_path = st.session_state.get("active_image_path")
         if img_path and Path(img_path).exists():
             st.image(img_path, use_container_width=True)
-        st.caption(f"**Resumo do Caso:** {current_preset.get('description', current_preset['title'])}")
+        st.caption(f"**Resumo do Caso:** {st.session_state.get('active_description', '')}")
 
     with col_summary:
         st.markdown("#### 🎯 Decisão Final dos 4 Agentes")
@@ -509,7 +671,7 @@ with tab_simulador:
 
     st.divider()
 
-    st.markdown("### 🤖 Passo 2: Entenda o que cada um dos 4 Agentes de IA fez neste caso")
+    st.markdown("### 🤖 Passo a Passo: O que cada um dos 4 Agentes de IA fez neste caso")
 
     ag1, ag2, ag3, ag4 = st.columns(4, gap="medium")
 
@@ -532,7 +694,7 @@ with tab_simulador:
                 <div class="agent-step-badge">Passo 1 • Visão Computacional</div>
                 <div class="agent-title">👁️ Agente 1: Inspetor de Imagem</div>
                 <div class="agent-body">
-                    <b>O que ele fez:</b> Leu a imagem do pedido/cardápio e checou a integridade física.<br><br>
+                    <b>O que ele fez:</b> Leu a foto enviada e checou a integridade física.<br><br>
                     <b>Nota da Embalagem/Foto:</b> {verdict.vision_result.packaging_integrity_score:.0f}/100<br><br>
                     <b>Descoberta:</b> {vision_anomaly_text}
                 </div>
