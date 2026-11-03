@@ -1,0 +1,194 @@
+{
+  "id": "gxeLmDf7QvJ42bzb",
+  "name": "iFood Sentinel & MenuOps — Multi-Agent Action Orchestrator",
+  "active": true,
+  "isArchived": false,
+  "versionId": "44bbf1b5-28aa-4294-9c9c-4ca78e39dc85",
+  "description": "Production-grade Multi-Agent Action Orchestrator for iFood Sentinel (Refund/Dispute Triage) & MenuOps (Catalog Governance) with 3-tier Risk Routing and ROI Telemetry.",
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "tags": [],
+  "nodes": [
+    {
+      "id": "c0d1f1dc-8ff3-48ac-a429-f62b4da8416f",
+      "name": "iFood Sentinel Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [220, 420],
+      "webhookId": "ff50813b-dfa1-4fe2-a331-7d70ce311e12",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ifood-sentinel-orchestrator",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      }
+    },
+    {
+      "id": "c1bce705-8260-426c-8e34-ebc61ee55469",
+      "name": "Audit Enricher & SLA Calculator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nreturn items.map((item, idx) => {\n  const raw = item.json.body ?? item.json ?? {};\n  const caseId = String(raw.case_id || `IFD-AUTO-${Date.now()}-${idx}`);\n  const workflowType = raw.workflow_type === 'menu_audit' ? 'menu_audit' : 'dispute_fraud';\n  const riskScore = Math.max(0, Math.min(1, Number(raw.risk_score ?? 0.5)));\n  const mlAnomalyFlag = Boolean(raw.ml_anomaly_flag ?? (riskScore >= 0.7));\n  const financialImpactBrl = Number(raw.financial_impact_brl ?? 0);\n\n  let slaPriority = 'STANDARD_P2';\n  let targetSlaSeconds = 900;\n  let estimatedHoursSaved = 0.18;\n  if (riskScore >= 0.75) {\n    slaPriority = 'CRITICAL_P0';\n    targetSlaSeconds = 30;\n    estimatedHoursSaved = 0.45;\n  } else if (riskScore >= 0.40) {\n    slaPriority = 'HIGH_P1';\n    targetSlaSeconds = 300;\n    estimatedHoursSaved = 0.28;\n  }\n\n  const seed = `${caseId}:${workflowType}:${riskScore.toFixed(4)}:${financialImpactBrl.toFixed(2)}`;\n  let hashNum = 2166136261;\n  for (let i = 0; i < seed.length; i++) {\n    hashNum ^= seed.charCodeAt(i);\n    hashNum = Math.imul(hashNum, 16777619);\n  }\n  const auditHash = 'SHA256-SIM-' + (hashNum >>> 0).toString(16).padStart(8, '0').toUpperCase();\n\n  return {\n    json: {\n      case_id: caseId,\n      workflow_type: workflowType,\n      risk_score: Number(riskScore.toFixed(4)),\n      ml_anomaly_flag: mlAnomalyFlag,\n      vision_summary: String(raw.vision_summary || 'Multimodal inspection completed.'),\n      rag_policy_clause: String(raw.rag_policy_clause || 'POL-GEN-1.0: Standard Marketplace Governance.'),\n      recommended_action: String(raw.recommended_action || 'EVALUATE_CASE'),\n      financial_impact_brl: Number(financialImpactBrl.toFixed(2)),\n      audit_hash: auditHash,\n      sla_priority: slaPriority,\n      target_sla_seconds: targetSlaSeconds,\n      estimated_hours_saved: estimatedHoursSaved,\n      execution_timestamp: new Date().toISOString()\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "1c2a5fae-a10b-45c7-967d-9c004309a01c",
+      "name": "Risk Severity Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [820, 420],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "renameOutput": true,
+              "outputKey": "CRITICAL_P0",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.risk_score }}",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "rightValue": 0.75
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "renameOutput": true,
+              "outputKey": "HIGH_P1",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.risk_score }}",
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "rightValue": 0.4
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "STANDARD_P2"
+        }
+      }
+    },
+    {
+      "id": "3de21e27-fa08-45a7-8be8-672adb03288d",
+      "name": "Trust & Safety Auto-Block & Incident Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 180],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item) => {\n  const d = item.json;\n  const isMenu = d.workflow_type === 'menu_audit';\n  return {\n    json: {\n      ...d,\n      routed_branch: 'CRITICAL_RISK_AUTO_BLOCK',\n      incident_protocol: `INC-P0-${d.case_id}-${d.audit_hash.slice(-6)}`,\n      actions_executed: isMenu\n        ? [\n            'QUARANTINE_COMPLIANCE_VIOLATION_SKU',\n            'BLOCK_PUBLICATION_ON_CATALOG_ENGINE',\n            'OPEN_TRUST_AND_SAFETY_INCIDENT_TICKET',\n            'NOTIFY_PARTNER_COMPLIANCE_WEBHOOK'\n          ]\n        : [\n            'BLOCK_AUTOMATED_REFUND_PAYOUT',\n            'FLAG_ACCOUNT_FOR_SYBIL_RING_REVIEW',\n            'OPEN_TRUST_AND_SAFETY_INCIDENT_TICKET',\n            'FREEZE_DISPUTE_CREDIT_LEDGER'\n          ],\n      fraud_savings_brl: Number((d.financial_impact_brl * 0.96).toFixed(2)),\n      operational_cost_saved_brl: Number((d.estimated_hours_saved * 62.0).toFixed(2)),\n      resolution_status: 'AUTO_BLOCKED_P0'\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "98e8c3d7-87ce-4e67-af49-d0872f4131a9",
+      "name": "Human-in-the-Loop Escalation & Catalog Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item) => {\n  const d = item.json;\n  const isMenu = d.workflow_type === 'menu_audit';\n  return {\n    json: {\n      ...d,\n      routed_branch: 'MODERATE_RISK_HITL_ESCALATION',\n      incident_protocol: `HITL-P1-${d.case_id}-${d.audit_hash.slice(-6)}`,\n      actions_executed: isMenu\n        ? [\n            'STAGE_AI_REWRITTEN_SEO_TITLE_AND_DESCRIPTION',\n            'QUEUE_1CLICK_PARTNER_CATALOG_APPROVAL',\n            'ATTACH_RAG_POLICY_REMEDIATION_DIFF'\n          ]\n        : [\n            'QUEUE_1CLICK_ANALYST_REVIEW_WITH_EVIDENCE_CARD',\n            'PROPOSE_PARTIAL_RETENTION_VOUCHER_50PCT',\n            'HOLD_ESCROW_PENDING_HUMAN_VERDICT'\n          ],\n      fraud_savings_brl: Number((d.financial_impact_brl * 0.55).toFixed(2)),\n      operational_cost_saved_brl: Number((d.estimated_hours_saved * 62.0).toFixed(2)),\n      resolution_status: 'QUEUED_FOR_1CLICK_HITL'\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "3ed0ed62-5021-4d81-b9dd-b989001ada6f",
+      "name": "Instant Auto-Refund / Menu Publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 660],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item) => {\n  const d = item.json;\n  const isMenu = d.workflow_type === 'menu_audit';\n  return {\n    json: {\n      ...d,\n      routed_branch: 'LOW_RISK_INSTANT_AUTO_APPROVAL',\n      incident_protocol: `AUTO-P2-${d.case_id}-${d.audit_hash.slice(-6)}`,\n      actions_executed: isMenu\n        ? [\n            'PUBLISH_ENRICHED_MENU_ITEM_TO_PRODUCTION',\n            'UPDATE_SEARCH_VECTOR_INDEX',\n            'EMIT_MERCHANT_CATALOG_LIVE_EVENT'\n          ]\n        : [\n            'EXECUTE_INSTANT_PIX_WALLET_REFUND',\n            'SEND_PUSH_CONFIRMATION_TO_CONSUMER',\n            'CLOSE_TICKET_ZERO_TOUCH_SLA'\n          ],\n      fraud_savings_brl: Number((d.financial_impact_brl * 0.15).toFixed(2)),\n      operational_cost_saved_brl: Number((d.estimated_hours_saved * 62.0).toFixed(2)),\n      resolution_status: 'RESOLVED_ZERO_TOUCH_AUTO'\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "3ab6750a-2c16-4354-895a-d0fa4a4ba5c9",
+      "name": "Final Consolidation & ROI Telemetry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item) => {\n  const d = item.json;\n  const totalBenefitBrl = Number(((d.fraud_savings_brl || 0) + (d.operational_cost_saved_brl || 0)).toFixed(2));\n  return {\n    json: {\n      status: 'success',\n      orchestrator: 'iFood Sentinel & MenuOps — Multi-Agent Action Orchestrator',\n      n8n_protocol_id: d.incident_protocol,\n      case_id: d.case_id,\n      workflow_type: d.workflow_type,\n      routed_branch: d.routed_branch,\n      sla_priority: d.sla_priority,\n      resolution_status: d.resolution_status,\n      actions_executed: d.actions_executed,\n      roi_metrics: {\n        risk_score: d.risk_score,\n        ml_anomaly_flag: d.ml_anomaly_flag,\n        financial_exposure_brl: d.financial_impact_brl,\n        fraud_or_gmv_impact_brl: d.fraud_savings_brl,\n        operational_cost_saved_brl: d.operational_cost_saved_brl,\n        total_estimated_benefit_brl: totalBenefitBrl,\n        estimated_hours_saved: d.estimated_hours_saved,\n        target_sla_seconds: d.target_sla_seconds\n      },\n      evidence_context: {\n        vision_summary: d.vision_summary,\n        rag_policy_clause: d.rag_policy_clause,\n        recommended_action: d.recommended_action,\n        audit_hash: d.audit_hash,\n        execution_timestamp: d.execution_timestamp\n      }\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "17a860f1-2f2e-48f6-a5f2-04dc8d2da2e3",
+      "name": "Return Verdict to Sentinel Engine",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1820, 420],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "iFood Sentinel Webhook Trigger": {
+      "main": [[{"node": "Audit Enricher & SLA Calculator", "type": "main", "index": 0}]]
+    },
+    "Audit Enricher & SLA Calculator": {
+      "main": [[{"node": "Risk Severity Router", "type": "main", "index": 0}]]
+    },
+    "Risk Severity Router": {
+      "main": [
+        [{"node": "Trust & Safety Auto-Block & Incident Ticket", "type": "main", "index": 0}],
+        [{"node": "Human-in-the-Loop Escalation & Catalog Enrichment", "type": "main", "index": 0}],
+        [{"node": "Instant Auto-Refund / Menu Publish", "type": "main", "index": 0}]
+      ]
+    },
+    "Trust & Safety Auto-Block & Incident Ticket": {
+      "main": [[{"node": "Final Consolidation & ROI Telemetry", "type": "main", "index": 0}]]
+    },
+    "Human-in-the-Loop Escalation & Catalog Enrichment": {
+      "main": [[{"node": "Final Consolidation & ROI Telemetry", "type": "main", "index": 0}]]
+    },
+    "Instant Auto-Refund / Menu Publish": {
+      "main": [[{"node": "Final Consolidation & ROI Telemetry", "type": "main", "index": 0}]]
+    },
+    "Final Consolidation & ROI Telemetry": {
+      "main": [[{"node": "Return Verdict to Sentinel Engine", "type": "main", "index": 0}]]
+    }
+  }
+}
